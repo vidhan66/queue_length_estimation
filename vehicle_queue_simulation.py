@@ -120,3 +120,118 @@ def _split(
     _pull(root)
     return root, b
 
+
+def _get_at(
+    root: Optional[_Node],
+    index: int,
+) -> Optional[_Node]:
+    """Return the node at a sequence index."""
+    while root is not None:
+        left_size = _size(root.left)
+
+        if index < left_size:
+            root = root.left
+        elif index == left_size:
+            return root
+        else:
+            index -= left_size + 1
+            root = root.right
+
+    return None
+
+
+def _remove_at(
+    root: Optional[_Node],
+    index: int,
+) -> tuple[Optional[_Node], Optional[_Node]]:
+    """Remove and return one entry at index."""
+    before, rest = _split(root, index)
+    selected, after = _split(rest, 1)
+
+    if selected is not None:
+        selected.left = None
+        selected.right = None
+        _pull(selected)
+
+    return _merge(before, after), selected
+
+
+def _find_shortest_fitting(
+    root: Optional[_Node],
+    required_width: float,
+) -> Optional[int]:
+    """
+    Find the entry with the smallest queue length among entries
+    whose width is sufficient.
+
+    Ties are resolved by choosing the leftmost entry.
+    """
+    best_index: Optional[int] = None
+    best_length = float("inf")
+
+    def search(
+        node: Optional[_Node],
+        offset: int,
+    ) -> None:
+        nonlocal best_index, best_length
+
+        if node is None:
+            return
+
+        # No entry in this subtree can fit.
+        if node.max_width + EPS < required_width:
+            return
+
+        # No entry can improve the best result found so far.
+        if node.min_queue_length >= best_length:
+            return
+
+        left_size = _size(node.left)
+
+        # Search in lateral order, left to right.
+        search(node.left, offset)
+
+        index = offset + left_size
+
+        if (
+            node.width + EPS >= required_width
+            and node.queue_length < best_length
+        ):
+            best_length = node.queue_length
+            best_index = index
+
+        search(node.right, index + 1)
+
+    search(root, 0)
+    return best_index
+
+
+def _find_shortest_index(
+    root: Optional[_Node],
+) -> Optional[int]:
+    """Find the leftmost entry having the minimum queue length."""
+    if root is None:
+        return None
+
+    target = root.min_queue_length
+
+    def search(
+        node: Optional[_Node],
+        offset: int,
+    ) -> Optional[int]:
+        if node is None or node.min_queue_length > target:
+            return None
+
+        left_size = _size(node.left)
+
+        result = search(node.left, offset)
+        if result is not None:
+            return result
+
+        if abs(node.queue_length - target) <= EPS:
+            return offset + left_size
+
+        return search(node.right, offset + left_size + 1)
+
+    return search(root, 0)
+
