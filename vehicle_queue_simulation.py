@@ -235,3 +235,292 @@ def _find_shortest_index(
 
     return search(root, 0)
 
+
+def _entries_in_order(
+    root: Optional[_Node],
+    output: list[Entry],
+) -> None:
+    if root is None:
+        return
+
+    _entries_in_order(root.left, output)
+    output.append(Entry(root.width, root.queue_length))
+    _entries_in_order(root.right, output)
+
+
+class QueueSimulation:
+    def __init__(
+        self,
+        road_width: float,
+        wall_clearance: float = 0.0,
+        seepage_ratio_T: float = 1.0,
+    ):
+        usable_width = road_width - 2 * wall_clearance
+
+        if usable_width <= 0:
+            raise ValueError("Usable road width must be positive.")
+        if seepage_ratio_T < 0:
+            raise ValueError("T must be non-negative.")
+
+        self.usable_width = usable_width
+        self.seepage_ratio_T = seepage_ratio_T
+
+        self.root: Optional[_Node] = _Node(
+            usable_width, 0.0
+        )
+
+        self.max_queue_length = 0.0
+        self.placed_count = 0
+        self.unplaced_count = 0
+
+    def _insert_at(
+        self,
+        index: int,
+        entry: _Node,
+    ) -> None:
+        before, after = _split(self.root, index)
+        self.root = _merge(
+            _merge(before, entry),
+            after,
+        )
+
+    def add_vehicle(
+        self,
+        vehicle: VehicleType,
+    ) -> Optional[dict]:
+        required_width = vehicle.effective_width
+
+        if required_width <= 0:
+            raise ValueError(
+                "Vehicle effective width must be positive."
+            )
+
+        # PASS 1:
+        # Search without modifying the tree.
+        # Select the shortest queue that fits the vehicle.
+        index = _find_shortest_fitting(
+            self.root,
+            required_width,
+        )
+
+        if index is not None:
+            # A suitable individual entry exists.
+            self.root, selected = _remove_at(
+                self.root, index
+            )
+
+            if selected is None:
+                raise RuntimeError("Selected entry not found.")
+
+            old_width = selected.width
+            old_length = selected.queue_length
+
+            # An empty region starts a new queue.
+            if old_length <= EPS:
+                new_length = vehicle.length
+            else:
+                new_length = (
+                    old_length
+                    + vehicle.longitudinal_gap
+                    + vehicle.length
+                )
+
+            remainder_width = old_width - required_width
+
+            # Insert the vehicle's occupied region.
+            replacement = _Node(
+                required_width,
+                new_length,
+            )
+
+            # The remaining width keeps its old queue length.
+            if remainder_width > EPS:
+                replacement = _merge(
+                    replacement,
+                    _Node(remainder_width, old_length),
+                )
+
+            self._insert_at(index, replacement)
+
+            self.max_queue_length = max(
+                self.max_queue_length,
+                new_length,
+            )
+            self.placed_count += 1
+
+            return {
+                "vehicle": vehicle.name,
+                "placement": "individual_fit",
+                "effective_width": required_width,
+                "previous_width": old_width,
+                "previous_queue_length": old_length,
+                "new_queue_length": new_length,
+                "remaining_width": max(
+                    0.0, remainder_width
+                ),
+                "max_queue_length": self.max_queue_length,
+                "entry_index": index,
+            }
+
+        # PASS 2:
+        # No individual entry fits. Remove entries in
+        # increasing queue-length order and aggregate widths.
+        consumed: list[tuple[float, float, int]] = []
+        total_width = 0.0
+
+        while self.root is not None and total_width + EPS < required_width:
+            shortest_index = _find_shortest_index(self.root)
+
+            if shortest_index is None:
+                break
+
+            self.root, selected = _remove_at(
+                self.root,
+                shortest_index,
+            )
+
+            if selected is None:
+                break
+
+            consumed.append((
+                selected.width,
+                selected.queue_length,
+                shortest_index,
+            ))
+            total_width += selected.width
+
+        if total_width + EPS < required_width:
+            # Not enough total width exists.
+            # Restore every consumed entry.
+            for width, length, original_index in sorted(
+                consumed, key=lambda item: item[2]
+            ):
+                self._insert_at(
+                    min(original_index, _size(self.root)),
+                    _Node(width, length),
+                )
+
+            self.unplaced_count += 1
+            return None
+
+        # The entries are consumed in ascending queue-length order.
+        # Use the longest consumed queue as the base length.
+        base_length = max(length for _, length, _ in consumed)
+
+        if base_length <= EPS:
+            new_length = vehicle.length
+        else:
+            new_length = (
+                base_length
+                + vehicle.longitudinal_gap
+                + vehicle.length
+            )
+
+        # The consumed entries are removed and replaced by the
+        # vehicle-width region. Any excess combined width is retained.
+        remainder_width = total_width - required_width
+
+        replacement = _Node(
+            required_width,
+            new_length,
+        )
+
+        if remainder_width > EPS:
+            replacement = _merge(
+                replacement,
+                _Node(remainder_width, base_length),
+            )
+
+        # The consumed entries may not have been adjacent laterally.
+        # Insert the replacement at the leftmost consumed position.
+        insertion_index = min(
+            original_index
+            for _, _, original_index in consumed
+        )
+
+        self._insert_at(
+            min(insertion_index, _size(self.root)),
+            replacement,
+        )
+
+        self.max_queue_length = max(
+            self.max_queue_length,
+            new_length,
+        )
+        self.placed_count += 1
+
+        return {
+            "vehicle": vehicle.name,
+            "placement": "aggregated",
+            "effective_width": required_width,
+            "aggregated_width": total_width,
+            "previous_queue_lengths": [
+                length for _, length, _ in consumed
+            ],
+            "base_queue_length": base_length,
+            "new_queue_length": new_length,
+            "remaining_width": max(0.0, remainder_width),
+            "max_queue_length": self.max_queue_length,
+            "entries_consumed": len(consumed),
+        }
+
+    def entries(self) -> list[Entry]:
+        result: list[Entry] = []
+        _entries_in_order(self.root, result)
+        return result
+
+    def snapshot(self) -> list[dict]:
+        return [
+            {
+                "width": round(entry.width, 3),
+                "queue_length": round(entry.queue_length, 3),
+            }
+            for entry in self.entries()
+        ]
+
+
+if __name__ == "__main__":
+    vehicle_types = {
+        "car": VehicleType(
+            "car", 3.72, 1.44, 1.00, 0.20
+        ),
+        "two_wheeler": VehicleType(
+            "two_wheeler", 1.87, 0.64, 0.50, 0.10
+        ),
+        "lcv": VehicleType(
+            "lcv", 6.10, 2.10, 1.00, 0.20
+        ),
+        "truck": VehicleType(
+            "truck", 7.50, 2.35, 1.20, 0.20
+        ),
+        "bus": VehicleType(
+            "bus", 10.10, 2.43, 1.20, 0.20
+        ),
+    }
+
+    simulation = QueueSimulation(
+        road_width=7.0,
+        wall_clearance=0.2,
+        seepage_ratio_T=1.0,
+    )
+
+    arrivals = [
+        "truck",
+        "car",
+        "two_wheeler",
+        "car",
+        "bus",
+        "two_wheeler",
+    ]
+
+    for name in arrivals:
+        result = simulation.add_vehicle(vehicle_types[name])
+
+        print(f"Arrival: {name}")
+        print("Placement:", result or "Unplaced")
+        print("Entries:", simulation.snapshot())
+        print(
+            "Maximum queue length:",
+            round(simulation.max_queue_length, 3),
+        )
+        print("-" * 60)
