@@ -1,0 +1,31 @@
+{
+  "description": "Static per-vehicle spacing values for microscopic traffic modeling. Longitudinal values are user-assumed. Lateral values are taken from the minimum lateral distance of vehicles when standing (0 km/h), as reported in Table 1 of Mishra et al. (2017), 'Novel Area Occupancy-Based Method for Passenger Car Unit Estimation on Multilane Urban Roads Under Heterogeneous Traffic Scenario', TRR No. 2615.",
+  "units": "meters (m)",
+
+  "per_vehicle_spacing": {
+    "Car": {
+      "longitudinal_spacing_m": 1.0,
+      "lateral_spacing_standing_m": 0.2
+    },
+    "Truck": {
+      "longitudinal_spacing_m": 1.5,
+      "lateral_spacing_standing_m": 0.2
+    },
+    "Bus": {
+      "longitudinal_spacing_m": 1.2,
+      "lateral_spacing_standing_m": 0.2
+    },
+    "Two-wheeler": {
+      "longitudinal_spacing_m": 0.5,
+      "lateral_spacing_standing_m": 0.1
+    },
+    "Three-wheeler": {
+      "longitudinal_spacing_m": 0.5,
+      "lateral_spacing_standing_m": 0.1
+    },
+    "LCV": {
+      "longitudinal_spacing_m": 1.0,
+      "lateral_spacing_standing_m": 0.2
+    }
+  }
+}
