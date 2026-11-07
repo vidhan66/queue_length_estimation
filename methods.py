@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import vehicle_queue_simulation 
 def process_arrival(vehicle_type, length, width, lateral_clearance, longitudinal_gap, 
                     timestamp):
@@ -41,5 +44,22 @@ def get_vehicle_type(vehicle_data):
             vehicle_type = "TramTrain"
 
         vehicle["vehicle_type"] = vehicle_type
+
+    return vehicle_data
+
+def get_spacing(vehicle_data):
+    """Add configured spacing values to each vehicle record."""
+    spacing_file = Path(__file__).with_name("spacing_dict.json")
+    with spacing_file.open(encoding="utf-8") as file:
+        spacing = json.load(file)["per_vehicle_spacing"]
+
+    for vehicle in vehicle_data:
+        vehicle_type = vehicle["vehicle_type"]
+        if vehicle_type not in spacing:
+            raise ValueError(
+                f"No spacing values configured for vehicle type "
+                f"{vehicle_type!r} in {spacing_file.name}."
+            )
+        vehicle.update(spacing[vehicle_type])
 
     return vehicle_data
