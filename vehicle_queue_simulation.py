@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 import heapq
-import itertools
 import random
 
 
@@ -120,109 +120,6 @@ def _split(
     return root, b
 
 
-def _get_at(
-    root: Optional[_Node],
-    index: int,
-) -> Optional[_Node]:
-    while root is not None:
-        left_size = _size(root.left)
-
-        if index < left_size:
-            root = root.left
-        elif index == left_size:
-            return root
-        else:
-            index -= left_size + 1
-            root = root.right
-
-    return None
-
-
-def _remove_at(
-    root: Optional[_Node],
-    index: int,
-) -> tuple[Optional[_Node], Optional[_Node]]:
-    before, rest = _split(root, index)
-    selected, after = _split(rest, 1)
-
-    if selected is not None:
-        selected.left = None
-        selected.right = None
-        _pull(selected)
-
-    return _merge(before, after), selected
-
-
-def _find_shortest_fitting(
-    root: Optional[_Node],
-    required_width: float,
-) -> Optional[int]:
-    best_index: Optional[int] = None
-    best_length = float("inf")
-
-    def search(
-        node: Optional[_Node],
-        offset: int,
-    ) -> None:
-        nonlocal best_index, best_length
-
-        if node is None:
-            return
-
-        if node.max_width + EPS < required_width:
-            return
-
-        if node.min_queue_length >= best_length:
-            return
-
-        left_size = _size(node.left)
-
-        search(node.left, offset)
-
-        index = offset + left_size
-
-        if (
-            node.width + EPS >= required_width
-            and node.queue_length < best_length
-        ):
-            best_length = node.queue_length
-            best_index = index
-
-        search(node.right, index + 1)
-
-    search(root, 0)
-    return best_index
-
-
-def _find_shortest_index(
-    root: Optional[_Node],
-) -> Optional[int]:
-    if root is None:
-        return None
-
-    target = root.min_queue_length
-
-    def search(
-        node: Optional[_Node],
-        offset: int,
-    ) -> Optional[int]:
-        if node is None or node.min_queue_length > target:
-            return None
-
-        left_size = _size(node.left)
-
-        result = search(node.left, offset)
-        if result is not None:
-            return result
-
-        if abs(node.queue_length - target) <= EPS:
-            return offset + left_size
-
-        return search(node.right, offset + left_size + 1)
-
-    return search(root, 0)
-
-
 def _entries_in_order(
     root: Optional[_Node],
     output: list[Entry],
@@ -235,12 +132,66 @@ def _entries_in_order(
     _entries_in_order(root.right, output)
 
 
+def _find_best_contiguous_window(
+    entries: list[Entry],
+    required_width: float,
+) -> Optional[tuple[int, int, float, float]]:
+    n = len(entries)
+    if n == 0:
+        return None
+
+    best: Optional[tuple[float, float, int, int]] = None
+    max_deque: deque[int] = deque()
+    left = 0
+    width_sum = 0.0
+
+    for right in range(n):
+        width_sum += entries[right].width
+
+        while (
+            max_deque
+            and entries[max_deque[-1]].queue_length
+            <= entries[right].queue_length
+        ):
+            max_deque.pop()
+        max_deque.append(right)
+
+        while (
+            left <= right
+            and width_sum - entries[left].width + EPS >= required_width
+        ):
+            width_sum -= entries[left].width
+            if max_deque and max_deque[0] == left:
+                max_deque.popleft()
+            left += 1
+
+        if width_sum + EPS >= required_width:
+            max_queue = entries[max_deque[0]].queue_length
+            candidate = (max_queue, width_sum, left, right)
+            if (
+                best is None
+                or candidate[0] < best[0] - EPS
+                or (
+                    abs(candidate[0] - best[0]) <= EPS
+                    and candidate[1] < best[1] - EPS
+                )
+            ):
+                best = candidate
+
+    if best is None:
+        return None
+
+    max_queue, total_width, start, end = best
+    return start, end, total_width, max_queue
+
+
 class QueueSimulation:
     def __init__(
         self,
         road_width: float,
         wall_clearance: float = 0.0,
         seepage_ratio_T: float = 1.0,
+        track_positions: bool = False,
     ):
         usable_width = road_width - 2 * wall_clearance
 
@@ -251,6 +202,7 @@ class QueueSimulation:
 
         self.usable_width = usable_width
         self.seepage_ratio_T = seepage_ratio_T
+        self.track_positions = track_positions
 
         self.root: Optional[_Node] = _Node(
             usable_width, 0.0
@@ -271,6 +223,15 @@ class QueueSimulation:
             after,
         )
 
+    def _remove_range(
+        self,
+        start: int,
+        count: int,
+    ) -> None:
+        before, rest = _split(self.root, start)
+        _middle, after = _split(rest, count)
+        self.root = _merge(before, after)
+
     def add_vehicle(
         self,
         vehicle: VehicleType,
@@ -282,103 +243,22 @@ class QueueSimulation:
                 "Vehicle effective width must be positive."
             )
 
-        index = _find_shortest_fitting(
-            self.root,
-            required_width,
+        entries_before = self.entries()
+
+        window = _find_best_contiguous_window(
+            entries_before, required_width
         )
 
-        if index is not None:
-            self.root, selected = _remove_at(
-                self.root, index
-            )
-
-            if selected is None:
-                raise RuntimeError("Selected entry not found.")
-
-            old_width = selected.width
-            old_length = selected.queue_length
-
-            if old_length <= EPS:
-                new_length = vehicle.length
-            else:
-                new_length = (
-                    old_length
-                    + vehicle.longitudinal_gap
-                    + vehicle.length
-                )
-
-            remainder_width = old_width - required_width
-
-            replacement = _Node(
-                required_width,
-                new_length,
-            )
-
-            if remainder_width > EPS:
-                replacement = _merge(
-                    replacement,
-                    _Node(remainder_width, old_length),
-                )
-
-            self._insert_at(index, replacement)
-
-            self.max_queue_length = max(
-                self.max_queue_length,
-                new_length,
-            )
-            self.placed_count += 1
-
-            return {
-                "vehicle": vehicle.name,
-                "placement": "individual_fit",
-                "effective_width": required_width,
-                "previous_width": old_width,
-                "previous_queue_length": old_length,
-                "new_queue_length": new_length,
-                "remaining_width": max(
-                    0.0, remainder_width
-                ),
-                "max_queue_length": self.max_queue_length,
-                "entry_index": index,
-            }
-
-        consumed: list[tuple[float, float, int]] = []
-        total_width = 0.0
-
-        while self.root is not None and total_width + EPS < required_width:
-            shortest_index = _find_shortest_index(self.root)
-
-            if shortest_index is None:
-                break
-
-            self.root, selected = _remove_at(
-                self.root,
-                shortest_index,
-            )
-
-            if selected is None:
-                break
-
-            consumed.append((
-                selected.width,
-                selected.queue_length,
-                shortest_index,
-            ))
-            total_width += selected.width
-
-        if total_width + EPS < required_width:
-            for width, length, original_index in sorted(
-                consumed, key=lambda item: item[2]
-            ):
-                self._insert_at(
-                    min(original_index, _size(self.root)),
-                    _Node(width, length),
-                )
-
+        if window is None:
             self.unplaced_count += 1
             return None
 
-        base_length = max(length for _, length, _ in consumed)
+        start, end, total_width, base_length = window
+        count = end - start + 1
+
+        offset = sum(e.width for e in entries_before[:start])
+
+        self._remove_range(start, count)
 
         if base_length <= EPS:
             new_length = vehicle.length
@@ -391,10 +271,7 @@ class QueueSimulation:
 
         remainder_width = total_width - required_width
 
-        replacement = _Node(
-            required_width,
-            new_length,
-        )
+        replacement = _Node(required_width, new_length)
 
         if remainder_width > EPS:
             replacement = _merge(
@@ -402,15 +279,7 @@ class QueueSimulation:
                 _Node(remainder_width, base_length),
             )
 
-        insertion_index = min(
-            original_index
-            for _, _, original_index in consumed
-        )
-
-        self._insert_at(
-            min(insertion_index, _size(self.root)),
-            replacement,
-        )
+        self._insert_at(start, replacement)
 
         self.max_queue_length = max(
             self.max_queue_length,
@@ -418,20 +287,30 @@ class QueueSimulation:
         )
         self.placed_count += 1
 
-        return {
+        result = {
             "vehicle": vehicle.name,
-            "placement": "aggregated",
+            "placement": "individual_fit" if count == 1 else "aggregated",
             "effective_width": required_width,
             "aggregated_width": total_width,
             "previous_queue_lengths": [
-                length for _, length, _ in consumed
+                entries_before[i].queue_length
+                for i in range(start, end + 1)
             ],
             "base_queue_length": base_length,
             "new_queue_length": new_length,
             "remaining_width": max(0.0, remainder_width),
             "max_queue_length": self.max_queue_length,
-            "entries_consumed": len(consumed),
+            "entries_consumed": count,
+            "insertion_index": start,
         }
+
+        if self.track_positions:
+            result["rect_x_start"] = offset
+            result["rect_x_width"] = required_width
+            result["rect_y_start"] = new_length - vehicle.length
+            result["rect_y_end"] = new_length
+
+        return result
 
     def entries(self) -> list[Entry]:
         result: list[Entry] = []
@@ -464,8 +343,8 @@ class EventDrivenQueue:
         self.queue_sim = queue_sim
         self.intersection_length = intersection_length
         self._heap: list[tuple[float, int, VehicleType]] = []
-        self._counter = itertools.count()
         self.current_time = 0.0
+        self._counter = 0
 
     def schedule_arrival(
         self,
@@ -478,9 +357,10 @@ class EventDrivenQueue:
             0.0,
         )
         arrival_time = entry_time + distance / speed
+        self._counter += 1
         heapq.heappush(
             self._heap,
-            (arrival_time, next(self._counter), vehicle),
+            (arrival_time, self._counter, vehicle),
         )
         return arrival_time
 
