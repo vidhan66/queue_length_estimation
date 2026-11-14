@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
+import heapq
+import itertools
 import random
 
 
@@ -79,7 +81,6 @@ def _merge(
     a: Optional[_Node],
     b: Optional[_Node],
 ) -> Optional[_Node]:
-    """Concatenate sequence a followed by sequence b."""
     if a is None:
         return b
     if b is None:
@@ -99,7 +100,6 @@ def _split(
     root: Optional[_Node],
     count: int,
 ) -> tuple[Optional[_Node], Optional[_Node]]:
-    """Split before index count."""
     if root is None:
         return None, None
 
@@ -124,7 +124,6 @@ def _get_at(
     root: Optional[_Node],
     index: int,
 ) -> Optional[_Node]:
-    """Return the node at a sequence index."""
     while root is not None:
         left_size = _size(root.left)
 
@@ -143,7 +142,6 @@ def _remove_at(
     root: Optional[_Node],
     index: int,
 ) -> tuple[Optional[_Node], Optional[_Node]]:
-    """Remove and return one entry at index."""
     before, rest = _split(root, index)
     selected, after = _split(rest, 1)
 
@@ -159,12 +157,6 @@ def _find_shortest_fitting(
     root: Optional[_Node],
     required_width: float,
 ) -> Optional[int]:
-    """
-    Find the entry with the smallest queue length among entries
-    whose width is sufficient.
-
-    Ties are resolved by choosing the leftmost entry.
-    """
     best_index: Optional[int] = None
     best_length = float("inf")
 
@@ -177,17 +169,14 @@ def _find_shortest_fitting(
         if node is None:
             return
 
-        # No entry in this subtree can fit.
         if node.max_width + EPS < required_width:
             return
 
-        # No entry can improve the best result found so far.
         if node.min_queue_length >= best_length:
             return
 
         left_size = _size(node.left)
 
-        # Search in lateral order, left to right.
         search(node.left, offset)
 
         index = offset + left_size
@@ -208,7 +197,6 @@ def _find_shortest_fitting(
 def _find_shortest_index(
     root: Optional[_Node],
 ) -> Optional[int]:
-    """Find the leftmost entry having the minimum queue length."""
     if root is None:
         return None
 
@@ -294,16 +282,12 @@ class QueueSimulation:
                 "Vehicle effective width must be positive."
             )
 
-        # PASS 1:
-        # Search without modifying the tree.
-        # Select the shortest queue that fits the vehicle.
         index = _find_shortest_fitting(
             self.root,
             required_width,
         )
 
         if index is not None:
-            # A suitable individual entry exists.
             self.root, selected = _remove_at(
                 self.root, index
             )
@@ -314,7 +298,6 @@ class QueueSimulation:
             old_width = selected.width
             old_length = selected.queue_length
 
-            # An empty region starts a new queue.
             if old_length <= EPS:
                 new_length = vehicle.length
             else:
@@ -326,13 +309,11 @@ class QueueSimulation:
 
             remainder_width = old_width - required_width
 
-            # Insert the vehicle's occupied region.
             replacement = _Node(
                 required_width,
                 new_length,
             )
 
-            # The remaining width keeps its old queue length.
             if remainder_width > EPS:
                 replacement = _merge(
                     replacement,
@@ -361,9 +342,6 @@ class QueueSimulation:
                 "entry_index": index,
             }
 
-        # PASS 2:
-        # No individual entry fits. Remove entries in
-        # increasing queue-length order and aggregate widths.
         consumed: list[tuple[float, float, int]] = []
         total_width = 0.0
 
@@ -389,8 +367,6 @@ class QueueSimulation:
             total_width += selected.width
 
         if total_width + EPS < required_width:
-            # Not enough total width exists.
-            # Restore every consumed entry.
             for width, length, original_index in sorted(
                 consumed, key=lambda item: item[2]
             ):
@@ -402,8 +378,6 @@ class QueueSimulation:
             self.unplaced_count += 1
             return None
 
-        # The entries are consumed in ascending queue-length order.
-        # Use the longest consumed queue as the base length.
         base_length = max(length for _, length, _ in consumed)
 
         if base_length <= EPS:
@@ -415,8 +389,6 @@ class QueueSimulation:
                 + vehicle.length
             )
 
-        # The consumed entries are removed and replaced by the
-        # vehicle-width region. Any excess combined width is retained.
         remainder_width = total_width - required_width
 
         replacement = _Node(
@@ -430,8 +402,6 @@ class QueueSimulation:
                 _Node(remainder_width, base_length),
             )
 
-        # The consumed entries may not have been adjacent laterally.
-        # Insert the replacement at the leftmost consumed position.
         insertion_index = min(
             original_index
             for _, _, original_index in consumed
@@ -478,6 +448,92 @@ class QueueSimulation:
         ]
 
 
+@dataclass
+class ArrivalRecord:
+    entry_time: float
+    vehicle: VehicleType
+    speed: float
+
+
+class EventDrivenQueue:
+    def __init__(
+        self,
+        queue_sim: QueueSimulation,
+        intersection_length: float,
+    ):
+        self.queue_sim = queue_sim
+        self.intersection_length = intersection_length
+        self._heap: list[tuple[float, int, VehicleType]] = []
+        self._counter = itertools.count()
+        self.current_time = 0.0
+
+    def schedule_arrival(
+        self,
+        vehicle: VehicleType,
+        speed: float,
+        entry_time: float,
+    ) -> float:
+        distance = max(
+            self.intersection_length - self.queue_sim.max_queue_length,
+            0.0,
+        )
+        arrival_time = entry_time + distance / speed
+        heapq.heappush(
+            self._heap,
+            (arrival_time, next(self._counter), vehicle),
+        )
+        return arrival_time
+
+    def run(
+        self,
+        entry_stream: list[ArrivalRecord],
+        on_event=None,
+    ) -> None:
+        entry_stream = sorted(
+            entry_stream, key=lambda rec: rec.entry_time
+        )
+        entry_idx = 0
+
+        while entry_idx < len(entry_stream) or self._heap:
+            next_entry_time = (
+                entry_stream[entry_idx].entry_time
+                if entry_idx < len(entry_stream)
+                else float("inf")
+            )
+            next_arrival_time = (
+                self._heap[0][0] if self._heap else float("inf")
+            )
+
+            if next_entry_time <= next_arrival_time:
+                record = entry_stream[entry_idx]
+                entry_idx += 1
+                self.current_time = record.entry_time
+                arrival_time = self.schedule_arrival(
+                    record.vehicle, record.speed, record.entry_time
+                )
+                if on_event:
+                    on_event({
+                        "type": "entry",
+                        "time": self.current_time,
+                        "vehicle": record.vehicle.name,
+                        "speed": record.speed,
+                        "scheduled_arrival_time": arrival_time,
+                    })
+            else:
+                arrival_time, _, vehicle = heapq.heappop(self._heap)
+                self.current_time = arrival_time
+                result = self.queue_sim.add_vehicle(vehicle)
+                if on_event:
+                    on_event({
+                        "type": "arrival",
+                        "time": self.current_time,
+                        "vehicle": vehicle.name,
+                        "placement": result,
+                        "entries": self.queue_sim.snapshot(),
+                        "max_queue_length": self.queue_sim.max_queue_length,
+                    })
+
+
 if __name__ == "__main__":
     vehicle_types = {
         "car": VehicleType(
@@ -503,23 +559,35 @@ if __name__ == "__main__":
         seepage_ratio_T=1.0,
     )
 
+    event_queue = EventDrivenQueue(
+        queue_sim=simulation,
+        intersection_length=150.0,
+    )
+
     arrivals = [
-        "truck",
-        "car",
-        "two_wheeler",
-        "car",
-        "bus",
-        "two_wheeler",
+        ArrivalRecord(0.0, vehicle_types["truck"], 8.0),
+        ArrivalRecord(1.5, vehicle_types["car"], 15.0),
+        ArrivalRecord(3.0, vehicle_types["two_wheeler"], 16.0),
+        ArrivalRecord(4.0, vehicle_types["car"], 14.0),
+        ArrivalRecord(6.0, vehicle_types["bus"], 9.0),
+        ArrivalRecord(7.5, vehicle_types["two_wheeler"], 17.0),
     ]
 
-    for name in arrivals:
-        result = simulation.add_vehicle(vehicle_types[name])
+    def log_event(event: dict) -> None:
+        if event["type"] == "entry":
+            print(
+                f"[t={event['time']:.2f}] ENTRY  "
+                f"{event['vehicle']} speed={event['speed']} "
+                f"-> scheduled arrival at t={event['scheduled_arrival_time']:.2f}"
+            )
+        else:
+            print(
+                f"[t={event['time']:.2f}] ARRIVE {event['vehicle']} "
+                f"placement={event['placement'] or 'Unplaced'}"
+            )
+            print(f"    entries={event['entries']}")
+            print(
+                f"    max_queue_length={event['max_queue_length']:.3f}"
+            )
 
-        print(f"Arrival: {name}")
-        print("Placement:", result or "Unplaced")
-        print("Entries:", simulation.snapshot())
-        print(
-            "Maximum queue length:",
-            round(simulation.max_queue_length, 3),
-        )
-        print("-" * 60)
+    event_queue.run(arrivals, on_event=log_event)
