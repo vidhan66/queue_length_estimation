@@ -414,8 +414,8 @@ class EventDrivenQueue:
                     })
 
 
-if __name__ == "__main__":
-    vehicle_types = {
+def default_vehicle_types() -> dict[str, VehicleType]:
+    return {
         "car": VehicleType(
             "car", 3.72, 1.44, 1.00, 0.20
         ),
@@ -433,18 +433,10 @@ if __name__ == "__main__":
         ),
     }
 
-    simulation = QueueSimulation(
-        road_width=7.0,
-        wall_clearance=0.2,
-        seepage_ratio_T=1.0,
-    )
 
-    event_queue = EventDrivenQueue(
-        queue_sim=simulation,
-        intersection_length=150.0,
-    )
-
-    arrivals = [
+def default_arrivals() -> list[ArrivalRecord]:
+    vehicle_types = default_vehicle_types()
+    return [
         ArrivalRecord(0.0, vehicle_types["truck"], 8.0),
         ArrivalRecord(1.5, vehicle_types["car"], 15.0),
         ArrivalRecord(3.0, vehicle_types["two_wheeler"], 16.0),
@@ -453,6 +445,29 @@ if __name__ == "__main__":
         ArrivalRecord(7.5, vehicle_types["two_wheeler"], 17.0),
     ]
 
+
+def run_default_scenario(
+    track_positions: bool = False,
+    on_event=None,
+) -> tuple[QueueSimulation, EventDrivenQueue]:
+    simulation = QueueSimulation(
+        road_width=7.0,
+        wall_clearance=0.2,
+        seepage_ratio_T=1.0,
+        track_positions=track_positions,
+    )
+
+    event_queue = EventDrivenQueue(
+        queue_sim=simulation,
+        intersection_length=150.0,
+    )
+
+    event_queue.run(default_arrivals(), on_event=on_event)
+
+    return simulation, event_queue
+
+
+if __name__ == "__main__":
     def log_event(event: dict) -> None:
         if event["type"] == "entry":
             print(
@@ -470,4 +485,4 @@ if __name__ == "__main__":
                 f"    max_queue_length={event['max_queue_length']:.3f}"
             )
 
-    event_queue.run(arrivals, on_event=log_event)
+    run_default_scenario(track_positions=False, on_event=log_event)
