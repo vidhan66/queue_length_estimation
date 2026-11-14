@@ -4,12 +4,16 @@ import os
 from dataclasses import dataclass
 
 import matplotlib
+
+from plot import QueueSample
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
-from vehicle_queue_simulation import run_default_scenario
-
+from vehicle_queue_simulation import (
+    run_default_scenario,
+    run_csv_scenario,
+)
 
 VEHICLE_COLORS = {
     "car": "#4C72B0",
@@ -30,37 +34,98 @@ class PlacedRectangle:
     y_end: float
 
 
-def collect_rectangles() -> tuple[list[PlacedRectangle], list[float], float]:
+def collect_rectangles(
+    scenario: str = "default",
+) -> tuple[list[PlacedRectangle], list[float], float]:
+
     rectangles: list[PlacedRectangle] = []
     frame_times: list[float] = []
 
-    def on_event(event: dict) -> None:
-        if event["type"] != "arrival":
-            return
+    if scenario == "default":
 
-        frame_times.append(event["time"])
+        def on_event(event: dict) -> None:
+            if event["type"] != "arrival":
+                return
 
-        placement = event["placement"]
-        if placement is None:
-            return
+            frame_times.append(float(event["time"]))
 
-        rectangles.append(
-            PlacedRectangle(
-                time=event["time"],
-                vehicle=event["vehicle"],
-                x_start=placement["rect_x_start"],
-                x_width=placement["rect_x_width"],
-                y_start=placement["rect_y_start"],
-                y_end=placement["rect_y_end"],
+            placement = event["placement"]
+
+            if placement is None:
+                return
+
+            rectangles.append(
+                PlacedRectangle(
+                    time=float(event["time"]),
+                    vehicle=event["vehicle"],
+                    x_start=placement["rect_x_start"],
+                    x_width=placement["rect_x_width"],
+                    y_start=placement["rect_y_start"],
+                    y_end=placement["rect_y_end"],
+                )
             )
+
+        simulation, _ = run_default_scenario(
+            track_positions=True,
+            on_event=on_event,
         )
 
-    simulation, _ = run_default_scenario(
-        track_positions=True, on_event=on_event
-    )
+    elif scenario == "csv":
+
+        simulation, results = run_csv_scenario(
+            csv_path="VISSIM_Vehicle_Data.csv",
+            road_width=7.0,
+            wall_clearance=0.2,
+            seepage_ratio_T=1.0,
+            track_positions=True,
+        )
+
+        for event in results:
+
+            frame_times.append(float(event["time"]))
+
+            placement = event["placement"]
+
+            if placement is None:
+                continue
+
+            vehicle_type = event["vehicle_type"].strip().lower()
+
+            if "two" in vehicle_type or "2" in vehicle_type:
+                vehicle_type = "two_wheeler"
+            elif "car" in vehicle_type:
+                vehicle_type = "car"
+            elif "lcv" in vehicle_type:
+                vehicle_type = "lcv"
+            elif "truck" in vehicle_type:
+                vehicle_type = "truck"
+            elif "bus" in vehicle_type:
+                vehicle_type = "bus"
+
+            rectangles.append(
+                PlacedRectangle(
+                    time=float(event["time"]),
+                    vehicle=vehicle_type,
+                    x_start=placement["rect_x_start"],
+                    x_width=placement["rect_x_width"],
+                    y_start=placement["rect_y_start"],
+                    y_end=placement["rect_y_end"],
+                )
+            )
+            print(
+                f"t={event['time']:7.2f} | "
+                f"id={event['vehicle_id']:3} | "
+                f"type={event['vehicle_type']:12} | "
+                f"placed={event['placed']} | "
+                f"placement={event['placement']}"
+            )
+
+    else:
+        raise ValueError(
+            f"Unknown scenario '{scenario}'. Use 'default' or 'csv'."
+        )
 
     return rectangles, frame_times, simulation.usable_width
-
 
 def draw_frame(
     ax,
@@ -105,7 +170,8 @@ def draw_frame(
 
 
 def main() -> None:
-    rectangles, frame_times, usable_width = collect_rectangles()
+    scenario = "csv" 
+    rectangles, frame_times, usable_width = collect_rectangles(scenario)
 
     if not rectangles:
         print("No vehicles were placed; nothing to visualize.")

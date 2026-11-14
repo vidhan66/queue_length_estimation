@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 import heapq
 import random
-
+import pandas as pd
 
 EPS = 1e-9
 
@@ -467,6 +467,89 @@ def run_default_scenario(
     return simulation, event_queue
 
 
+def run_csv_scenario(
+    csv_path: str,
+    road_width: float = 7.0,
+    wall_clearance: float = 0.2,
+    seepage_ratio_T: float = 1.0,
+    track_positions: bool = False,
+    on_event=None,
+) -> tuple[QueueSimulation, list[dict]]:
+    """
+    Run the queue-placement algorithm using vehicle data from a CSV.
+
+    Each CSV row represents a vehicle arriving at the shared link.
+    Vehicles from all lanes are processed in chronological order.
+    """
+
+    import pandas as pd
+
+    df = pd.read_csv(csv_path)
+
+    required_columns = {
+        "time",
+        "vehicle_id",
+        "vehicle_type",
+        "length_m",
+        "width_m",
+        "longitudinal_spacing_m",
+        "lateral_spacing_standing_m",
+    }
+
+    missing = required_columns - set(df.columns)
+
+    if missing:
+        raise ValueError(
+            f"Missing required CSV columns: {sorted(missing)}"
+        )
+
+    if df.empty:
+        raise ValueError("CSV contains no vehicle records.")
+
+    if df[list(required_columns)].isnull().any().any():
+        raise ValueError("CSV contains missing values in required columns.")
+
+    # Stable sorting preserves CSV order for simultaneous arrivals.
+    df = df.sort_values("time", kind="stable")
+
+    simulation = QueueSimulation(
+        road_width=road_width,
+        wall_clearance=wall_clearance,
+        seepage_ratio_T=seepage_ratio_T,
+        track_positions=track_positions,
+    )
+
+    results = []
+
+    for row in df.itertuples(index=False):
+
+        vehicle = VehicleType(
+            name=str(row.vehicle_type),
+            length=float(row.length_m),
+            width=float(row.width_m),
+            longitudinal_gap=float(row.longitudinal_spacing_m),
+            lateral_clearance=float(row.lateral_spacing_standing_m),
+        )
+
+        placement = simulation.add_vehicle(vehicle)
+
+        event = {
+            "time": float(row.time),
+            "vehicle_id": int(row.vehicle_id),
+            "vehicle_type": vehicle.name,
+            "placement": placement,
+            "max_queue_length": simulation.max_queue_length,
+            "entries": simulation.snapshot(),
+            "placed": placement is not None,
+        }
+
+        results.append(event)
+
+        if on_event is not None:
+            on_event(event)
+
+    return simulation, results
+
 if __name__ == "__main__":
     def log_event(event: dict) -> None:
         if event["type"] == "entry":
@@ -485,4 +568,28 @@ if __name__ == "__main__":
                 f"    max_queue_length={event['max_queue_length']:.3f}"
             )
 
-    run_default_scenario(track_positions=False, on_event=log_event)
+    #run_default_scenario(track_positions=False, on_event=log_event)
+    simulation, results = run_csv_scenario(
+        csv_path="VISSIM_Vehicle_Data.csv",
+        road_width=7.0,
+        wall_clearance=0.2,
+        seepage_ratio_T=1.0,
+        track_positions=True,
+    )
+
+    print("\nVISSIM queue simulation results:")
+
+    for event in results:
+        print(
+            f"[t={event['time']:6.1f}] "
+            f"Vehicle={event['vehicle_id']:2d} "
+            f"Type={event['vehicle_type']:12s} "
+            f"Queue={event['max_queue_length']:7.2f} m "
+            f"Placed={event['placed']}"
+        )
+
+    print("\nFinal statistics:")
+    print("Total vehicles:", len(results))
+    print("Placed:", simulation.placed_count)
+    print("Unplaced:", simulation.unplaced_count)
+    print("Maximum queue length:", simulation.max_queue_length)
