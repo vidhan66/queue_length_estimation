@@ -8,8 +8,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
-from vehicle_queue_simulation import run_default_scenario
-
+from vehicle_queue_simulation import run_csv_scenario,run_default_scenario
 
 @dataclass
 class QueueSample:
@@ -41,64 +40,42 @@ def collect_queue_profile() -> list[QueueSample]:
     return samples
 
 
+
 def collect_queue_profile_from_csv(csv_path):
-    """Calculate event-based queue-length proxy from CSV."""
+    """Collect maximum queue length using the original
+    queue-placement algorithm and CSV vehicle data."""
 
-    import pandas as pd
-
-    df = pd.read_csv(csv_path)
-
-    required = [
-        "time",
-        "lane",
-        "length_m",
-        "longitudinal_spacing_m"
-    ]
-
-    if not all(col in df.columns for col in required):
-        raise ValueError("Required queue calculation columns missing.")
-
-    df = df.sort_values("time").copy()
-
-    df["time"] = pd.to_numeric(df["time"], errors="coerce")
-    df["length_m"] = pd.to_numeric(df["length_m"], errors="coerce")
-    df["longitudinal_spacing_m"] = pd.to_numeric(
-        df["longitudinal_spacing_m"], errors="coerce"
-    )
-
-    df = df.dropna(subset=required)
-
-    # Initial queue state
     samples = [QueueSample(0.0, 0.0)]
 
-    # Maintain accumulated occupied length separately for each lane
-    lane_lengths = {}
+    # Run the original queue algorithm using CSV records
+    simulation, results = run_csv_scenario(
+        csv_path=csv_path,
+        road_width=7.0,
+        wall_clearance=0.2,
+        seepage_ratio_T=1.0,
+        track_positions=False
+    )
 
-    # Process every vehicle arrival event
-    for _, vehicle in df.iterrows():
-
-        lane = vehicle["lane"]
-
-        vehicle_length = float(vehicle["length_m"])
-        spacing = float(vehicle["longitudinal_spacing_m"])
-
-        if lane not in lane_lengths:
-            lane_lengths[lane] = 0.0
-
-        # Update occupied length of the respective lane
-        lane_lengths[lane] += vehicle_length + spacing
-
-        # Maximum occupied length among all lanes
-        max_queue_length = max(lane_lengths.values())
-
+    # Record maximum queue length after every arrival
+    for event in results:
         samples.append(
             QueueSample(
-                time=float(vehicle["time"]),
-                queue_length=max_queue_length
+                time=float(event["time"]),
+                queue_length=float(event["max_queue_length"])
             )
         )
 
+    print("\nCSV Queue Simulation Summary:")
+    print(f"Total vehicles: {len(results)}")
+    print(f"Placed vehicles: {simulation.placed_count}")
+    print(f"Unplaced vehicles: {simulation.unplaced_count}")
+    print(
+        f"Maximum queue length: "
+        f"{simulation.max_queue_length:.2f} m"
+    )
+
     return samples
+
 
 def prepare_samples(
     samples: list[QueueSample],
