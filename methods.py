@@ -14,7 +14,6 @@ def process_arrival(vehicle_type, length, width, lateral_clearance, longitudinal
         timestamp=timestamp,
     )
 
-
 def get_vehicle_type(vehicle_data):
     """Add a dimension-based vehicle_type to each vehicle record.
 
@@ -32,18 +31,16 @@ def get_vehicle_type(vehicle_data):
             vehicle_type = "Pedestrian"
         elif length <= 2.0 and width <= 0.8:
             vehicle_type = "Two-wheeler"
+        elif 2.6 < length < 2.7 and 1.35 < width < 1.4:
+            vehicle_type = "Three-wheeler"
         elif length <= 5.0 and width <= 2.2:
             vehicle_type = "Car"
         elif length <= 7.0 and width <= 2.5:
             vehicle_type = "LCV"
         elif 10 <= length <= 14.0 and width >= 2.4:
             vehicle_type = "Bus"
-        elif 14 <= length <= 20.0 and width >= 2.4:
+        else :
             vehicle_type = "Truck"
-        elif 2.6 < length < 2.7 and 1.35 < width < 1.4:
-            vehicle_type = "Three-wheeler"
-        else:
-            vehicle_type = "TramTrain"
 
         vehicle["vehicle_type"] = vehicle_type
 
