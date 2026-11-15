@@ -40,6 +40,8 @@ def get_vehicle_type(vehicle_data):
             vehicle_type = "Bus"
         elif 14 <= length <= 20.0 and width >= 2.4:
             vehicle_type = "Truck"
+        elif 2.6 < length < 2.7 and 1.35 < width < 1.4:
+            vehicle_type = "Three-wheeler"
         else:
             vehicle_type = "TramTrain"
 

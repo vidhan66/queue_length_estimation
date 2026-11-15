@@ -73,7 +73,7 @@ def collect_rectangles(
     elif scenario == "csv":
 
         simulation, results = run_csv_scenario(
-            csv_path="VISSIM_Vehicle_Data.csv",
+            csv_path="VISSIM_Vehicle_Data(1).csv",
             road_width=7.0,
             wall_clearance=0.2,
             seepage_ratio_T=1.0,
